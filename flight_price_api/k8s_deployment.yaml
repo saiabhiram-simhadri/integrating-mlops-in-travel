@@ -1,0 +1,73 @@
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: flight-price-api-deployment
+  labels:
+    app: flight-price-api
+spec:
+  replicas: 2
+  selector:
+    matchLabels:
+      app: flight-price-api
+  template:
+    metadata:
+      labels:
+        app: flight-price-api
+    spec:
+      containers:
+      - name: flight-price-container
+        image: saiabhiramsimhadri/flight-price-api:latest
+        imagePullPolicy: Always
+        ports:
+        - containerPort: 5000
+        resources:
+          requests:
+            cpu: "200m"
+            memory: "256Mi"
+          limits:
+            cpu: "500m"
+            memory: "512Mi"
+        readinessProbe:
+          httpGet:
+            path: /health
+            port: 5000
+          initialDelaySeconds: 5
+          periodSeconds: 10
+        livenessProbe:
+          httpGet:
+            path: /health
+            port: 5000
+          initialDelaySeconds: 10
+          periodSeconds: 15
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: flight-price-service
+spec:
+  type: NodePort
+  ports:
+  - port: 5000
+    targetPort: 5000
+    nodePort: 30080
+  selector:
+    app: flight-price-api
+---
+apiVersion: autoscaling/v2
+kind: HorizontalPodAutoscaler
+metadata:
+  name: flight-price-hpa
+spec:
+  scaleTargetRef:
+    apiVersion: apps/v1
+    kind: Deployment
+    name: flight-price-api-deployment
+  minReplicas: 2
+  maxReplicas: 5
+  metrics:
+  - type: Resource
+    resource:
+      name: cpu
+      target:
+        type: Utilization
+        averageUtilization: 70

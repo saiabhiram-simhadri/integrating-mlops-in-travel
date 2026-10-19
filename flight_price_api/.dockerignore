@@ -1,0 +1,10 @@
+.git
+.github
+__pycache__
+*.pyc
+*.pyo
+venv/
+.venv/
+*.csv
+*.ipynb
+.pytest_cache
