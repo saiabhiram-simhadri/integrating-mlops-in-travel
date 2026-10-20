@@ -1,0 +1,10 @@
+.venv/
+.git/
+.idea/
+**/__pycache__/
+**/mlruns/
+**/mlflow.db*
+**/*.db.bak
+models/
+notebooks/
+experiment_outputs/

@@ -1,0 +1,19 @@
+FROM apache/airflow:2.11.2-python3.12
+
+# Separate ML libraries from Airflow's own dependencies.
+COPY --chown=airflow:root experiment_tracking/requirements-training.txt /tmp/requirements-training.txt
+RUN python -m venv /opt/airflow/training-env \
+    && /opt/airflow/training-env/bin/python -m pip install --no-cache-dir -r /tmp/requirements-training.txt
+
+ENV TRAINING_PYTHON=/opt/airflow/training-env/bin/python \
+    AIRFLOW__CORE__LOAD_EXAMPLES=False \
+    AIRFLOW__CORE__DAGS_FOLDER=/opt/project/dags \
+    AIRFLOW__CORE__EXECUTOR=SequentialExecutor
+
+WORKDIR /opt/project
+COPY --chown=airflow:root dags/travel_pipeline_dag.py ./dags/travel_pipeline_dag.py
+COPY --chown=airflow:root data/flights.csv ./data/flights.csv
+COPY --chown=airflow:root experiment_tracking/flight_price_experiments.py ./experiment_tracking/flight_price_experiments.py
+COPY --chown=airflow:root tests/test_travel_pipeline_dag.py ./tests/test_travel_pipeline_dag.py
+
+CMD ["standalone"]

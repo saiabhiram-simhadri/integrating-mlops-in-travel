@@ -22,3 +22,6 @@ dist/
 
 # Runtime output
 *.log
+
+# Generated experiment tracking data and artifacts
+mlruns/
