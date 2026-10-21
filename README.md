@@ -26,7 +26,18 @@ The hotel recommender artifact is included, but there is currently no hotel reco
 │   └── Gender_Classification.ipynb
 ├── models/
 │   ├── flight_price_pipeline.joblib
+│   ├── gender_classifier.joblib
 │   └── travel_hotel_recommender.joblib
+├── experiment_tracking/
+│   ├── flight_price_experiments.py
+│   ├── requirements_mflow.txt
+│   ├── start_mlflow_ui.ps1
+│   ├── AIRFLOW.md
+│   ├── mlflow.db
+│   └── mlruns/                       # MLflow run artifacts
+├── dags/
+│   ├── travel_pipeline_dag.py
+│   └── requirements_dags.txt
 ├── flight_price_api/
 │   ├── app.py
 │   ├── models/
@@ -35,9 +46,15 @@ The hotel recommender artifact is included, but there is currently no hotel reco
 │   ├── Dockerfile
 │   ├── .dockerignore
 │   └── k8s_deployment.yaml
+├── tests/
+│   ├── test_app_streamlit.py
+│   └── test_travel_pipeline_dag.py
+├── app_streamlit.py
+├── Dockerfile.airflow
+├── Dockerfile.airflow.dockerignore
+├── Jenkinsfile
 ├── .gitignore
 ├── pyproject.toml
-├── flight_price_experiments.py
 └── README.md
 ```
 
@@ -68,13 +85,13 @@ Install the tracking extra and run the demo from the repository root:
 
 ```powershell
 python -m pip install -e ".[tracking]"
-python flight_price_experiments.py
+python experiment_tracking/flight_price_experiments.py
 ```
 
 For a faster demonstration, use a reproducible sample:
 
 ```powershell
-python flight_price_experiments.py --max-rows 2000
+python experiment_tracking/flight_price_experiments.py --max-rows 2000
 ```
 
 The script follows the flight notebook's numerical baseline: `distance`, `flight_month`, and `is_weekend`, with an 80/20 random split and seed 47. Scaling is fitted inside each training pipeline. It compares Ridge, Random Forest, and two LightGBM learning rates. Categorical variables and target-derived features such as `price_per_km` are excluded.
@@ -83,15 +100,15 @@ Each invocation creates four separate model runs in the `flight-price-experiment
 
 Serialization follows the notebook: `joblib.dump(pipeline, path)` saves the full fitted pipeline, and `joblib.load(path)` reloads it. The script checks that reloaded predictions match. Each run saves its pipeline and exact library requirements in `experiment_outputs/<run_id>/` and logs those files under the run's `api_model` artifacts. The API supports this raw pipeline format. A comparison CSV in `experiment_outputs/` identifies the lowest validation RMSE; these are model-selection scores, not independent final test scores.
 
-Metadata is stored in root `mlflow.db` by default. Use `MLFLOW_TRACKING_URI` to select another backend. Outputs are eligible for Git tracking under the current `.gitignore`. Existing API models are preserved. Edit the settings near the top of the script to change paths, the experiment name, seed, or validation ratio; use `--max-rows` for a quick demonstration.
+Metadata is stored in `experiment_tracking/mlflow.db` by default, using an absolute path independent of the working directory. Use `--tracking-uri` or `MLFLOW_TRACKING_URI` to select another backend. The script prints the tracking URI and a matching UI command at startup.
 
 View the runs on port 5001 (leaving port 5000 available for the API):
 
 ```powershell
-mlflow ui --backend-store-uri sqlite:///mlflow.db --port 5001
+mlflow ui --backend-store-uri sqlite:///experiment_tracking/mlflow.db --port 5001
 ```
 
-Open `http://localhost:5001`, select the experiment, and compare the model runs. Use `MLFLOW_TRACKING_URI` for another tracking backend. Additional options are shown by `python flight_price_experiments.py --help`.
+Run this command from the repository root. Open `http://localhost:5001`, select `flight-price-experiments`, and expand the parent comparison runs to see the model runs. A bare `mlflow ui` can open a different database in the current directory and show no experiments. If a UI is already running, stop it with Ctrl+C and restart it with the correct `--backend-store-uri`. When training uses another backend, point the UI at that same backend. Additional options are shown by `python experiment_tracking/flight_price_experiments.py --help`.
 
 ## Run the flight price API
 

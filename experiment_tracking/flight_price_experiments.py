@@ -104,6 +104,9 @@ def run_experiments(args):
     """Train each model, log its results, and display the comparison."""
     # 1. Set up tracking and split the data once for all models.
     mlflow.set_tracking_uri(args.tracking_uri)
+    print(f"MLflow tracking URI: {mlflow.get_tracking_uri()}")
+    if mlflow.get_tracking_uri().startswith("sqlite:"):
+        print(f'mlflow ui --backend-store-uri "{mlflow.get_tracking_uri()}" --port 5050')
     if mlflow.get_experiment_by_name(args.experiment_name) is None:
         mlflow.create_experiment(
             args.experiment_name,
