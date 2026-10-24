@@ -1,17 +1,21 @@
 # Integrating MLOps in Travel
 
-An early-stage project combining machine learning experiments on travel data with a Flask API for flight price prediction. This README describes the current repository and will evolve as the project develops.
+A travel MLOps project combining flight price prediction, gender classification, and travel recommendations with MLflow experiment tracking, Airflow training orchestration, a Flask prediction API, and a Streamlit dashboard. Docker, Kubernetes, and Jenkins support containerization and deployment workflows.
 
-## Current scope
+## Features
 
-- Flight price prediction and gender classification notebooks.
+- Flight price prediction, gender classification, and travel recommendation notebooks.
 - Local flight, hotel, and user datasets.
 - Saved flight price prediction and hotel recommender artifacts.
 - A flight price API supporting single and batch predictions.
 - A standalone MLflow experiment tracking demo for flight price models.
+- A Streamlit dashboard for hotel and traveler recommendations.
+- An Airflow DAG that validates flight data before running model comparisons.
+- Unit tests for the dashboard and Airflow workflow.
 - Docker packaging and Kubernetes deployment, service, and autoscaling manifests for the flight price API.
+- A Jenkins pipeline definition for linting, import checks, container publishing, and Kubernetes deployment.
 
-The hotel recommender artifact is included, but there is currently no hotel recommendation API. Automated training orchestration, CI/CD, and model monitoring are not yet configured in this repository.
+Hotel recommendations are available through the Streamlit dashboard. Airflow orchestrates data validation and model comparison, while Jenkins defines the CI/CD workflow.
 
 ## Repository layout
 
@@ -23,7 +27,8 @@ The hotel recommender artifact is included, but there is currently no hotel reco
 │   └── users.csv
 ├── notebooks/
 │   ├── Flight_Price_Prediction.ipynb
-│   └── Gender_Classification.ipynb
+│   ├── Gender_Classification.ipynb
+│   └── Travel_Recommendation.ipynb
 ├── models/
 │   ├── flight_price_pipeline.joblib
 │   ├── gender_classifier.joblib
@@ -31,8 +36,6 @@ The hotel recommender artifact is included, but there is currently no hotel reco
 ├── experiment_tracking/
 │   ├── flight_price_experiments.py
 │   ├── requirements_mflow.txt
-│   ├── start_mlflow_ui.ps1
-│   ├── AIRFLOW.md
 │   ├── mlflow.db
 │   └── mlruns/                       # MLflow run artifacts
 ├── dags/
@@ -54,7 +57,6 @@ The hotel recommender artifact is included, but there is currently no hotel reco
 ├── Dockerfile.airflow.dockerignore
 ├── Jenkinsfile
 ├── .gitignore
-├── pyproject.toml
 └── README.md
 ```
 
@@ -62,29 +64,29 @@ Datasets and model artifacts are intended to be committed to this repository. Th
 
 ## Local setup
 
-Use Python 3.11 or later. Python 3.11 matches the Docker image. From the repository root, create and activate a virtual environment, then install dependencies:
+The API Docker image uses Python 3.11. From the repository root, create a virtual environment and install the API dependencies:
 
 ```powershell
 python -m venv .venv
 .\.venv\Scripts\Activate.ps1
-python -m pip install -e "."
+python -m pip install -r flight_price_api/requirements.txt
 ```
 
 For notebook tools and plotting libraries:
 
 ```powershell
-python -m pip install -e ".[notebooks]"
+python -m pip install jupyterlab matplotlib seaborn shap
 jupyter lab
 ```
 
-Notebook paths and any additional experiment-specific dependencies may need adjustment for your environment.
+Install additional dependencies as needed for each notebook. Use separate virtual environments for the API, MLflow training, and Airflow workflows.
 
 ## Model experiment tracking with MLflow
 
-Install the tracking extra and run the demo from the repository root:
+Install the tracking requirements in a separate virtual environment and run the demo from the repository root:
 
 ```powershell
-python -m pip install -e ".[tracking]"
+python -m pip install -r experiment_tracking/requirements_mflow.txt
 python experiment_tracking/flight_price_experiments.py
 ```
 
@@ -96,9 +98,9 @@ python experiment_tracking/flight_price_experiments.py --max-rows 2000
 
 The script follows the flight notebook's numerical baseline: `distance`, `flight_month`, and `is_weekend`, with an 80/20 random split and seed 47. Scaling is fitted inside each training pipeline. It compares Ridge, Random Forest, and two LightGBM learning rates. Categorical variables and target-derived features such as `price_per_km` are excluded.
 
-Each invocation creates four separate model runs in the `flight-price-experiments` experiment. Each run logs model parameters, training/validation MAE, RMSE and R², split settings, features, source code, and the training/validation row indices. The script trains fresh pipelines so validation rows are excluded from fitting.
+Each invocation creates a parent comparison run and four nested model runs in the `flight-price-experiments` experiment. The parent records the seed, validation size, best model, and best run ID. Each model run logs estimator parameters and training/validation MAE, RMSE, and R². The script trains fresh pipelines so validation rows are excluded from fitting.
 
-Serialization follows the notebook: `joblib.dump(pipeline, path)` saves the full fitted pipeline, and `joblib.load(path)` reloads it. The script checks that reloaded predictions match. Each run saves its pipeline and exact library requirements in `experiment_outputs/<run_id>/` and logs those files under the run's `api_model` artifacts. The API supports this raw pipeline format. A comparison CSV in `experiment_outputs/` identifies the lowest validation RMSE; these are model-selection scores, not independent final test scores.
+Each model run logs the fitted Joblib pipeline and its library versions under `api_model/`. The parent run stores `model_comparison.csv`, ordered by validation RMSE. Artifacts are stored under `experiment_tracking/mlruns/` for newly created experiments; existing experiments retain their configured artifact locations. The API supports the raw pipeline format. Training does not automatically replace either committed API model copy. Validation scores are for model selection, not independent final test scores.
 
 Metadata is stored in `experiment_tracking/mlflow.db` by default, using an absolute path independent of the working directory. Use `--tracking-uri` or `MLFLOW_TRACKING_URI` to select another backend. The script prints the tracking URI and a matching UI command at startup.
 
@@ -170,9 +172,34 @@ kubectl apply -f flight_price_api/k8s_deployment.yaml
 
 The manifest defines a deployment, a NodePort service on `30080`, and CPU-based autoscaling from two to five replicas. Autoscaling requires a working cluster metrics API. Actual service access depends on your cluster setup.
 
-## Development status
+## Airflow training workflow
 
-`pyproject.toml` includes optional development dependencies and Ruff/pytest settings. Automated tests have not yet been added. Model accuracy, notebook reproducibility, and deployment behavior should be validated for the target environment before relying on predictions.
+`dags/travel_pipeline_dag.py` defines `travel_flight_price_mlops_workflow`, scheduled daily with catchup disabled and one active run at a time:
+
+```text
+validate_incoming_data -> retrain_and_track_model
+```
+
+Validation checks required columns, missing values, dates, positive finite distances, non-negative finite prices, and a minimum of 10 records. It passes the resolved dataset path to the training task through XCom. The training task launches `experiment_tracking/flight_price_experiments.py` as a subprocess and records its results in MLflow.
+
+| Environment variable | Purpose |
+| --- | --- |
+| `TRAVEL_PROJECT_ROOT` | Override the project root resolved from the DAG location |
+| `FLIGHTS_DATA_PATH` | Override the input CSV; relative paths resolve from the project root |
+| `TRAINING_PYTHON` | Select the training interpreter; defaults to Airflow's interpreter |
+| `MLFLOW_TRACKING_URI` | Override the default project SQLite backend |
+| `MLFLOW_EXPERIMENT_NAME` | Override `flight-price-experiments` for DAG training |
+| `FLIGHTS_MAX_ROWS` | Optionally sample records during training |
+
+Run Airflow in Linux or a container, with `dags/requirements_dags.txt` installed and a separate training interpreter containing `experiment_tracking/requirements_mflow.txt`. Keep the project files accessible to both tasks.
+
+`Dockerfile.airflow` describes an Airflow container with a separate training environment based on Python 3.12.
+
+## Jenkins configuration
+
+`Jenkinsfile` defines checkout, flake8 checks, an application import check, Docker build/push, and Kubernetes rollout.
+
+Jenkins requires a Docker-capable agent, Python dependencies and flake8, Docker Hub credentials named `dockerhub-credentials`, and configured Kubernetes access.
 
 
 ## Hotel recommendation dashboard
@@ -180,7 +207,7 @@ The manifest defines a deployment, a NodePort service on `30080`, and CPU-based 
 Install the dashboard dependencies and launch the app from the project root:
 
 ```powershell
-python -m pip install -e ".[dashboard]"
+python -m pip install -r flight_price_api/requirements.txt streamlit
 python -m streamlit run app_streamlit.py
 ```
 
@@ -190,8 +217,18 @@ script. **Similar hotels** compares hotel stay patterns using cosine similarity.
 unseen destinations using similar travelers, then finds hotels within the budget.
 Scores describe similarity or destination preference, not booking probabilities.
 
-Run the dashboard tests with:
+## Tests
+
+Run the dashboard tests after installing its dependencies:
 
 ```powershell
 python -m unittest discover -s tests -p test_app_streamlit.py -v
 ```
+
+Run the Airflow tests in an environment with Airflow and the training dependencies configured:
+
+```powershell
+python -m unittest discover -s tests -p test_travel_pipeline_dag.py -v
+```
+
+The Airflow tests check task ordering, invalid price rejection, and a complete `dag.test()` run that executes training. They skip when Airflow is unavailable. Set `FLIGHTS_MAX_ROWS=2000` for a smaller training sample. A complete DAG test writes MLflow runs and model artifacts.
